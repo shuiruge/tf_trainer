@@ -11,14 +11,13 @@ from .utils import ensure_directory
 
 
 
-def iterate(sess, train_ops, feed_dict_generator,
+def iterate(sess, train_ops, feed_dict,
             summarizer=None, writer=None, global_step=None,
             options=None, run_metadata=None):
-  """Iterates one step for optimizing the `train_op`.
+  """Iterates one step for training the `train_ops`.
 
   CAUTION:
-    This "function" will change the state of the `sess` and the `global_step`
-    (if not `None`).
+    This "function" will change the state of the `sess`.
 
   NOTE:
     This implementation abstracts all, and nothing else is essential. (That is,
@@ -32,9 +31,9 @@ def iterate(sess, train_ops, feed_dict_generator,
       List of `Op`s, as the train-ops to be iterated. Ensure that it has been
       initialized.
 
-    feed_dict_generator:
-      Generator that emits a `feed_dict` associated to the `tf.placeholder`s
-      needed by the `train_op`, at each calling of `next()`.
+    feed_dict:
+      A `feed_dict` associated to the `tf.placeholder`s needed by the
+      `train_ops`.
 
     summarizer:
       A "summary op" that summarizes the graph, e.g. `tf.summary.merge_all`,
@@ -58,18 +57,12 @@ def iterate(sess, train_ops, feed_dict_generator,
 
   Returns:
     List of the values of `train_ops`.
-
-  Raises:
-    `StopIteration` from `next(feed_dict_generator)`.
   """
 
   # Get `fetches`
   fetches = train_ops.copy()  # shallow copy a list.
   if summarizer is not None:
     fetches.append(summarizer)
-
-  # Get `feed_dict`
-  feed_dict = next(feed_dict_generator)
 
   # Iterate in one step and get values
   fetch_vals = sess.run(fetches,
@@ -313,7 +306,8 @@ class BaseTrainer(object):
       global_step_val = tf.train.global_step(self.sess, self.global_step)
 
       try:
-        iterate(self.sess, self.train_ops, feed_dict_generator,
+        feed_dict = next(feed_dict_generator)
+        iterate(self.sess, self.train_ops, feed_dict,
                 summarizer=summarizer, writer=writer,
                 global_step=global_step_val, options=options,
                 run_metadata=run_metadata)
