@@ -99,40 +99,75 @@ class BaseTrainer(object):
     graph:
       An instance of `tf.Graph` or `None`, as the graph to be trained,
       optional.
+
     sess:
       An instance of `tf.Session` or `None`, optional. If not `None`, the
       method `self.get_sess()` will not be called.
+
     sess_config:
       Optional. A ConfigProto protocol buffer with configuration options for
       the session.
+
     sess_target:
       Optional. The execution engine to connect to. Defaults to using an
       in-process engine. See Distributed TensorFlow for more examples.
+
     logdir:
       `str` or `None`, as the logdir of TensorBoard, optional.
+
     dir_to_ckpt:
       `str` or `None`, as the directory to checkpoints, optional.
+
     init_global_step:
       `int` as the initial value of global step, optional.
+
     initializer:
       A TenosrFlow initializer, or `None`, optional. If `None`, then using
       `tf.global_variables_initializer` as the employed initializer.
-    verbose:
-      `bool`, optional.
-      
+
   Attributes:
     `graph`, `sess`, `logdir`, summarizer (if `logdir` is not `None`), writer 
     (if `logdir` is not `None`), `dir_to_ckpt`, `saver` (if `dir_to_ckpt` is
-    not `None`), `global_step`, `train_ops`, `initializer`, `verbose`.
+    not `None`), `global_step`, `train_ops`, `initializer`.
+
+  Methods:
+    get_sess:
+      Abstract method. Returns an instance of `tf.Session()` as the argument
+      `sess` of `iterate()`. Only when `sess` in `__init__()` is `None` will
+      this method to be called.
+
+    get_train_ops:
+      Abstract method. Returns list of ops as the argument `train_ops` of
+      `iterate()`.
+
+    get_summarizer:
+      Abstract method. Returns op as the argument `summarizer` of `iterate()`.
+
+    get_writer:
+      Abstract method. Returns an instance of `tf.summary.FileWriter`. This
+      method will be called only when `self.logdir` is not `None`.
+    get_saver:
+      Abstract method. Returns an instance of `tf.Saver`. This method will be
+      called only when `self.dir_to_ckpt` is not `None`.
+
+    save:
+      Abstract method. Save the checkpoint and anything else you want. This
+      method will be called only when `self.dir_to_ckpt` is not `None`.
+
+    restore:
+      Abstract method. Restore the checkpoint and anything else you want. This
+      method will be called only when `self.dir_to_ckpt` is not `None`.
+
+    train:
+      As the trainer trains.
   """
 
+
   def __init__(self, graph=None, sess=None, sess_config=None, sess_target='',
-        logdir=None, dir_to_ckpt=None, init_global_step=0, initializer=None,
-        verbose=True):
+        logdir=None, dir_to_ckpt=None, init_global_step=0, initializer=None):
 
     self.logdir = logdir
     self.dir_to_ckpt = dir_to_ckpt
-    self.verbose = verbose
 
     # Notice that `tf.Graph.__init__()` needs no argument, so an abstract
     # `get_graph` method is not essential, thus directly define `self.graph`
@@ -262,8 +297,6 @@ class BaseTrainer(object):
     # Restore
     if self.dir_to_ckpt is not None:
       self.restore()
-      if self.verbose:
-        print('INFO - Restored from {}.'.format(self.dir_to_ckpt))
 
     # Iterations
     for i in tqdm(range(n_iters)):  # XXX
@@ -296,5 +329,4 @@ class BaseTrainer(object):
 
     # Finally
     if self.dir_to_ckpt is not None:
-      if self.verbose:
-        print('INFO - Saved to {}.'.format(self.dir_to_ckpt))
+      print('INFO - Saved to {}.'.format(self.dir_to_ckpt))

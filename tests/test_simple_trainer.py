@@ -11,9 +11,10 @@ sys.path.append('../')
 from sample.simple_trainer import SimpleTrainer
 import numpy as np
 import tensorflow as tf
-from mnist import read_data_sets
-
-
+try:
+    from tensorflow.examples.tutorials.mnist.input_data import read_data_sets
+except:
+    raise Exception('Your TF version < 1.4.0.')
 
 
 # Add `source_url` since the data cannot be downloaded via Python
@@ -32,7 +33,7 @@ cross_entropy = tf.reduce_mean(
 
 
 trainer = SimpleTrainer(
-    cross_entropy,
+    loss=cross_entropy,
     logdir='../dat/logs/',
     dir_to_ckpt='../dat/test_simple_trainer/')
 

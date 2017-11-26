@@ -22,14 +22,17 @@ def get_sess(graph, sess_config, sess_target, debug):
   return sess
 
 
-def get_train_ops(graph, loss, optimizer, global_step):
+def get_train_ops(graph, loss, gvs, optimizer, global_step):
 
   with graph.as_default():
 
     with tf.name_scope('optimization'):
 
-      train_op = optimizer.minimize(
-          loss, global_step=global_step, name='train_op')
+      if gvs is not None:
+        train_op = optimizer.apply_gradients(gvs)
+      else:
+        train_op = optimizer.minimize(
+            loss, global_step=global_step, name='train_op')
 
   return [train_op]
 
@@ -73,6 +76,7 @@ def restore(dir_to_ckpt, saver, sess):
   ckpt = tf.train.get_checkpoint_state(dir_to_ckpt)
   if ckpt and ckpt.model_checkpoint_path:
     saver.restore(sess, ckpt.model_checkpoint_path)
+    print('INFO - Restored from {}.'.format(dir_to_ckpt))
   else:
     print("INFO - There's been no ckpt yet.")
 
@@ -81,10 +85,11 @@ def restore(dir_to_ckpt, saver, sess):
 class SimpleTrainer(BaseTrainer):
   """With the basic implementation for each method."""
 
-  def __init__(self, loss, optimizer=None, log_vars=None, debug=False,
-               *args, **kwargs):
+  def __init__(self, loss=None, gvs=None, optimizer=None,
+               log_vars=None, debug=False, *args, **kwargs):
 
     self.loss = loss
+    self.gvs = gvs
     self.log_vars = log_vars if log_vars is not None \
                     else [self.loss]
 
@@ -101,7 +106,7 @@ class SimpleTrainer(BaseTrainer):
                     self.sess_target, self.debug)
 
   def get_train_ops(self):
-    return get_train_ops(self.graph, self.loss,
+    return get_train_ops(self.graph, self.loss, self.gvs,
                          self.optimizer, self.global_step)
 
   def get_summarizer(self):
