@@ -139,17 +139,20 @@ class BaseTrainer(object):
     get_writer:
       Abstract method. Returns an instance of `tf.summary.FileWriter`. This
       method will be called only when `self.logdir` is not `None`.
+
     get_saver:
       Abstract method. Returns an instance of `tf.Saver`. This method will be
       called only when `self.dir_to_ckpt` is not `None`.
 
     save:
-      Abstract method. Save the checkpoint and anything else you want. This
-      method will be called only when `self.dir_to_ckpt` is not `None`.
+      Abstract method. Save the checkpoint of `self.sess` to disk
+      (`self.dir_to_ckpt`). This method will be called only when
+      `self.dir_to_ckpt` is not `None`.
 
     restore:
-      Abstract method. Restore the checkpoint and anything else you want. This
-      method will be called only when `self.dir_to_ckpt` is not `None`.
+      Abstract method. Restore the checkpoint to `self.sess` from disk
+      (`self.dir_to_ckpt`). This method will be called only when
+      `self.dir_to_ckpt` is not `None`.
 
     train:
       As the trainer trains.
@@ -204,6 +207,9 @@ class BaseTrainer(object):
       self.sess_target = sess_target
       self.sess = self.get_sess()
 
+    # Restore checkpoint in `self.dir_to_ckpt` to `self.sess`
+    if self.dir_to_ckpt is not None:
+      self.restore()
 
   @abc.abstractmethod
   def get_sess(self):
@@ -243,15 +249,15 @@ class BaseTrainer(object):
 
   @abc.abstractmethod
   def save(self):
-    """Save the checkpoint and anything else you want. This method will be
-    called only when `self.dir_to_ckpt` is not `None`."""
+    """Save the checkpoint of `self.sess` to disk (`self.dir_to_ckpt`). This
+    method will be called only when `self.dir_to_ckpt` is not `None`."""
     pass
 
 
   @abc.abstractmethod
   def restore(self):
-    """Restore the checkpoint and anything else you want. This method will be
-    called only when `self.dir_to_ckpt` is not `None`."""
+    """Restore the checkpoint to `self.sess` from disk (`self.dir_to_ckpt`). This
+    method will be called only when `self.dir_to_ckpt` is not `None`."""
     pass
 
 
@@ -286,10 +292,6 @@ class BaseTrainer(object):
     """
 
     self.sess.run(self.initializer)
-
-    # Restore
-    if self.dir_to_ckpt is not None:
-      self.restore()
 
     # Iterations
     for i in tqdm(range(n_iters)):  # XXX
