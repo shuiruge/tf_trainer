@@ -22,7 +22,7 @@ def get_sess(graph, sess_config, sess_target, debug):
   return sess
 
 
-def get_train_ops(graph, loss, gvs, optimizer, global_step):
+def get_train_ops(graph, loss, gvs, optimizer):
 
   with graph.as_default():
 
@@ -31,8 +31,10 @@ def get_train_ops(graph, loss, gvs, optimizer, global_step):
       if gvs is not None:
         train_op = optimizer.apply_gradients(gvs)
       else:
-        train_op = optimizer.minimize(
-            loss, global_step=global_step, name='train_op')
+        # The argument `global_step` in `minimize()` will automatically
+        # `assign_add(1)` to what is put into the arugment, thus shall not be
+        # filled, keep it `None` (as defalut)
+        train_op = optimizer.minimize(loss, name='train_op')
 
   return [train_op]
 
@@ -77,8 +79,10 @@ def restore(dir_to_ckpt, saver, sess):
   if ckpt and ckpt.model_checkpoint_path:
     saver.restore(sess, ckpt.model_checkpoint_path)
     print('INFO - Restored from {}.'.format(dir_to_ckpt))
+    return True
   else:
     print("INFO - There's been no ckpt yet.")
+    return False
 
 
 
@@ -106,8 +110,7 @@ class SimpleTrainer(BaseTrainer):
                     self.sess_target, self.debug)
 
   def get_train_ops(self):
-    return get_train_ops(self.graph, self.loss, self.gvs,
-                         self.optimizer, self.global_step)
+    return get_train_ops(self.graph, self.loss, self.gvs, self.optimizer)
 
   def get_summarizer(self):
     return get_summarizer(self.graph, self.log_vars)

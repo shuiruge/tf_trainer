@@ -209,7 +209,7 @@ class BaseTrainer(object):
 
     # Restore checkpoint in `self.dir_to_ckpt` to `self.sess`
     if self.dir_to_ckpt is not None:
-      self.restore()
+      self.restored = self.restore()
 
   @abc.abstractmethod
   def get_sess(self):
@@ -257,13 +257,17 @@ class BaseTrainer(object):
   @abc.abstractmethod
   def restore(self):
     """Restore the checkpoint to `self.sess` from disk (`self.dir_to_ckpt`). This
-    method will be called only when `self.dir_to_ckpt` is not `None`."""
+    method will be called only when `self.dir_to_ckpt` is not `None`.
+
+    Returns:
+      `bool`, being `True` if sucessfully restored from checkpoint; else `False`.
+    """
     pass
 
 
   def train(self, n_iters, feed_dict_generator,
             saver_skip_step=100, writer_skip_step=10,
-            options=None, run_metadata=None):
+            options=None, run_metadata=None, verbose=True):
     """As the trainer trains.
 
     Args:
@@ -289,9 +293,18 @@ class BaseTrainer(object):
       run_metadata:
         A `[RunMetadata]` protocol buffer or `None`, as the associated argument
         of `tf.Session.run()`, optional.
+
+      verbose:
+        `bool`.
     """
 
-    self.sess.run(self.initializer)
+    # Notice that re-initializing variables will cancel all have restored
+    if not self.restored:
+      self.sess.run(self.initializer)
+
+    if verbose:
+      global_step_val = tf.train.global_step(self.sess, self.global_step)
+      print('INFO - Start training at global step {}.'.format(global_step_val))
 
     # Iterations
     for i in tqdm(range(n_iters)):  # XXX
