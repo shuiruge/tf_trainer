@@ -265,8 +265,35 @@ class BaseTrainer(object):
     pass
 
 
+  def initialize_if_not_restored(self):
+    """Notice that re-initializing variables will cancel all have restored."""
+    if not self.restored:
+      self.sess.run(self.initializer)
+
+
+  def get_global_step_val(self):
+    """Returns an `int` as the temporal value of global step."""
+    global_step_val = tf.train.global_step(self.sess, self.global_step)
+    return global_step_val
+
+
+  def get_to_save_generator(self, skip_step=100):
+    """XXX"""
+    i = 0
+    while True:
+      i += 1
+      yield True if i % skip_step == 0 else False
+
+
+  def get_to_summarize_generator(self, skip_step=100):
+    """XXX"""
+    i = 0
+    while True:
+      i += 1
+      yield True if i % 100 == 0 else False
+
+
   def train(self, n_iters, feed_dict_generator,
-            saver_skip_step=100, writer_skip_step=10,
             options=None, run_metadata=None, verbose=True):
     """As the trainer trains.
 
@@ -298,9 +325,12 @@ class BaseTrainer(object):
         `bool`.
     """
 
-    # Notice that re-initializing variables will cancel all have restored
-    if not self.restored:
-      self.sess.run(self.initializer)
+    self.initialize_if_not_restored()
+
+    if self.logdir is not None:
+      to_summarize = self.get_to_summarize_generator()
+    if self.dir_to_ckpt is not None:
+      to_save = self.get_to_save_generator()
 
     if verbose:
       global_step_val = tf.train.global_step(self.sess, self.global_step)
@@ -309,33 +339,34 @@ class BaseTrainer(object):
     # Iterations
     for i in tqdm(range(n_iters)):  # XXX
 
-      if self.logdir is not None and i % writer_skip_step == 0:
-        # Shall summarize and write summary
-        summarizer = self.summarizer
-        writer = self.writer
-      else:
-        # Not summarize and write summary
+      try:
+        # Not summarize and write summary if not ...
         summarizer = None
         writer = None
 
-      global_step_val = tf.train.global_step(self.sess, self.global_step)
+        if self.logdir is not None:
+          if next(to_summarize) is True:
+            # Shall summarize and write summary
+            summarizer = self.summarizer
+            writer = self.writer
 
-      try:
         feed_dict = next(feed_dict_generator)
+        global_step_val = self.get_global_step_val()
         iterate(self.sess, self.train_ops, feed_dict,
                 summarizer=summarizer, writer=writer,
                 global_step=global_step_val, options=options,
                 run_metadata=run_metadata)
         self.sess.run(self.increase_global_step_op)
+
       except StopIteration:
         print('INFO - No more training data to iterate.')
         break
 
       # Save at `skip_step`
       if self.dir_to_ckpt is not None:
-        if (i+1) % saver_skip_step == 0:
+        if next(to_save) is True:
           self.save()
 
     # Finally
-    if self.dir_to_ckpt is not None:
+    if verbose and self.dir_to_ckpt is not None:
       print('INFO - Saved to {}.'.format(self.dir_to_ckpt))

@@ -247,7 +247,7 @@ class BaseFineTuner(abc.ABC):
                     if self.max_n_rollbacks is not None \
                            and self.n_rollbacks == self.max_n_rollbacks:
                         except_msg = 'The maximum number of continous ' \
-                                    + 'rolling-backs has been reached.'
+                                   + 'rolling-backs has been reached.'
                         raise Exception(except_msg)
 
                     # Pass to the calling of `self.get_ft_parameter()` in the end

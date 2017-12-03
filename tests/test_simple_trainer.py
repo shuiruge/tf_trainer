@@ -35,7 +35,7 @@ cross_entropy = tf.reduce_mean(
 trainer = SimpleTrainer(
     loss=cross_entropy,
     logdir='../dat/logs/',
-    dir_to_ckpt='../dat/test_simple_trainer/')
+    dir_to_ckpt='../dat/checkpoints/test_simple_trainer/')
 
 def get_feed_dict_generator():
     while True:
