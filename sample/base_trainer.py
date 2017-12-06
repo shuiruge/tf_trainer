@@ -267,8 +267,11 @@ class BaseTrainer(object):
 
   def initialize_if_not_restored(self):
     """Notice that re-initializing variables will cancel all have restored."""
-    if not self.restored:
+    if self.dir_to_ckpt is None:
       self.sess.run(self.initializer)
+    else:
+      if not self.restored:
+        self.sess.run(self.initializer)
 
 
   def get_global_step_val(self):
