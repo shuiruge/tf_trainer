@@ -11,10 +11,10 @@ from .utils import ensure_directory
 
 
 
-def iterate(sess, train_ops, feed_dict,
+def iterate(sess, iter_ops, feed_dict,
             summarizer=None, writer=None, global_step=None,
             options=None, run_metadata=None):
-  """Iterates one step for training the `train_ops`.
+  """Iterates one step for the TensorFlow `Op`s in `iter_ops`.
 
   CAUTION:
     This "function" will change the state of the `sess`.
@@ -27,13 +27,11 @@ def iterate(sess, train_ops, feed_dict,
     sess:
       An instance of `tf.Session()`, as the session this iteration works on.
 
-    train_ops:
-      List of `Op`s, as the train-ops to be iterated. Ensure that it has been
-      initialized.
+    iter_ops:
+      List of `Op`s to be iterated. Ensure that it has been initialized.
 
     feed_dict:
-      A `feed_dict` associated to the `tf.placeholder`s needed by the
-      `train_ops`.
+      A `feed_dict` associated to the `tf.placeholder`s needed by the `iter_ops`.
 
     summarizer:
       A "summary op" that summarizes the graph, e.g. `tf.summary.merge_all`,
@@ -56,11 +54,11 @@ def iterate(sess, train_ops, feed_dict,
       `tf.Session.run()`, optional.
 
   Returns:
-    List of the values of `train_ops`.
+    List of the values of the `iter_ops`.
   """
 
   # Get `fetches`
-  fetches = train_ops.copy()  # shallow copy a list.
+  fetches = [op for op in iter_ops]
   if summarizer is not None:
     fetches.append(summarizer)
 
@@ -75,13 +73,13 @@ def iterate(sess, train_ops, feed_dict,
     _, summary = fetch_vals
     writer.add_summary(summary, global_step=global_step)
 
-  # Return the values of `train_ops`
+  # Return the values of `iter_ops`
   if summarizer is not None:
     # The last element of `fetch_vals` will be the `summary`
-    train_ops_vals = fetch_vals[:-1]
+    iter_op_vals = fetch_vals[:-1]
   else:
-    train_ops_vals = fetch_vals
-  return train_ops_vals
+    iter_op_vals = fetch_vals
+  return iter_op_vals
 
 
 
@@ -121,7 +119,7 @@ class BaseTrainer(object):
   Attributes:
     `graph`, `sess`, `logdir`, summarizer (if `logdir` is not `None`), writer 
     (if `logdir` is not `None`), `dir_to_ckpt`, `saver` (if `dir_to_ckpt` is
-    not `None`), `global_step`, `train_ops`, `initializer`.
+    not `None`), `global_step`, `iter_ops`, `initializer`.
 
   Methods:
     get_sess:
@@ -129,8 +127,8 @@ class BaseTrainer(object):
       `sess` of `iterate()`. Only when `sess` in `__init__()` is `None` will
       this method to be called.
 
-    get_train_ops:
-      Abstract method. Returns list of ops as the argument `train_ops` of
+    get_iter_ops:
+      Abstract method. Returns list of ops as the argument `iter_ops` of
       `iterate()`.
 
     get_summarizer:
@@ -173,8 +171,8 @@ class BaseTrainer(object):
       self.graph = tf.get_default_graph()
 
     # Added name-scope "auxillary_ops" into `self.graph`.
-    # Building of `train_ops` may need `self.global_step`, which thus
-    # shall be defined in front.
+    # Building of `iter_ops` may need `self.global_step`, which thus shall be
+    # defined in front.
     with self.graph.as_default():
       with tf.name_scope('auxillary_ops'):
         with tf.name_scope('increase_global_step_op'):
@@ -182,7 +180,7 @@ class BaseTrainer(object):
               init_global_step, trainable=False, name='global_step')
           self.increase_global_step_op = self.global_step.assign_add(1)
 
-    self.train_ops = self.get_train_ops()
+    self.iter_ops = self.get_iter_ops()
 
     # Initializer shall be placed in the end of the graph.
     # XXX: Why?
@@ -211,19 +209,18 @@ class BaseTrainer(object):
     if self.dir_to_ckpt is not None:
       self.restored = self.restore()
 
+
   @abc.abstractmethod
   def get_sess(self):
     """Returns an instance of `tf.Session()` as the argument `sess` of
     `iterate()`. Only when `sess` in `__init__()` is `None` will this method
     to be called."""
-    sess = tf.Session(graph=self.graph,
-        config=self.sess_config, target=self.sess_target)
-    return sess
+    pass
 
 
   @abc.abstractmethod
-  def get_train_ops(self):
-    """Returns list of ops as the argument `train_ops` of `iterate()`."""
+  def get_iter_ops(self):
+    """Returns list of ops as the argument `iter_ops` of `iterate()`."""
     pass
 
 
@@ -355,7 +352,7 @@ class BaseTrainer(object):
 
         feed_dict = next(feed_dict_generator)
         global_step_val = self.get_global_step_val()
-        iterate(self.sess, self.train_ops, feed_dict,
+        iterate(self.sess, self.iter_ops, feed_dict,
                 summarizer=summarizer, writer=writer,
                 global_step=global_step_val, options=options,
                 run_metadata=run_metadata)

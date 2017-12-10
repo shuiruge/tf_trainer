@@ -22,7 +22,7 @@ def get_sess(graph, sess_config, sess_target, debug):
   return sess
 
 
-def get_train_ops(graph, loss, gvs, optimizer):
+def get_iter_ops(graph, loss, gvs, optimizer):
 
   with graph.as_default():
 
@@ -46,7 +46,12 @@ def get_summarizer(graph, log_vars):
     with tf.name_scope('summarization'):
 
       for v in log_vars:
-        tf.summary.scalar(v.name, v)
+        if v.shape == tf.TensorShape([]):
+          # `v` is a scalar.
+          tf.summary.scalar(v.name, v)
+        else:
+          # `v` is a tensor.
+          tf.summary.tensor_summary(v.name, v)
         tf.summary.histogram(v.name, v)
 
       summarizer = tf.summary.merge_all()
@@ -109,8 +114,8 @@ class SimpleTrainer(BaseTrainer):
     return get_sess(self.graph, self.sess_config,
                     self.sess_target, self.debug)
 
-  def get_train_ops(self):
-    return get_train_ops(self.graph, self.loss, self.gvs, self.optimizer)
+  def get_iter_ops(self):
+    return get_iter_ops(self.graph, self.loss, self.gvs, self.optimizer)
 
   def get_summarizer(self):
     return get_summarizer(self.graph, self.log_vars)

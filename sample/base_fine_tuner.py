@@ -16,7 +16,8 @@ class BaseFineTuner(abc.ABC):
         a running iterative model, basing on the temperal LOCAL STATE, i.e. the
         performances in the several recent iterations; and the fine-tuning can
         be a trial, as which a backward-rolling shall be provided as long as the
-        fine-tuning (as a trial) is judged as failed.
+        fine-tuning (as a trial) is judged as failed; and in determing its next
+        move, this failure is to be taken into account.
 
     Abbrivations:
         "ft" for "fine-tuning".
