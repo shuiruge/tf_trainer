@@ -11,9 +11,8 @@ from .utils import ensure_directory
 
 
 
-def iterate(sess, iter_ops, feed_dict,
-            summarizer=None, writer=None, global_step=None,
-            options=None, run_metadata=None):
+def iterate(sess, iter_ops, feed_dict, summarizer=None, writer=None,
+            global_step_val=None, options=None, run_metadata=None):
   """Iterates one step for the TensorFlow `Op`s in `iter_ops`.
 
   CAUTION:
@@ -22,6 +21,10 @@ def iterate(sess, iter_ops, feed_dict,
   NOTE:
     This implementation abstracts all, and nothing else is essential. (That is,
     all args in all employed functions (methods) have been fullfilled.)
+
+    Since the saving process in TensorFlow is not achived by `Op` (as how the
+    summarizing and writing to TensorBoard are done), it is not essential, thus
+    will not also, be included herein.
 
   Args:
     sess:
@@ -42,8 +45,8 @@ def iterate(sess, iter_ops, feed_dict,
       If the `summarizer` is `None` (as default), then this argument is useless,
       optional.
 
-    global_step:
-      `int` or `None`, optional.
+    global_step_val:
+      `int` or `None`, as the value of global-step, optional.
 
     options:
       A `[RunOptions]` protocol buffer or `None`, as the associated argument of
@@ -71,7 +74,7 @@ def iterate(sess, iter_ops, feed_dict,
   # Write to TensorBoard
   if summarizer is not None and writer is not None:
     _, summary = fetch_vals
-    writer.add_summary(summary, global_step=global_step)
+    writer.add_summary(summary, global_step=global_step_val)
 
   # Return the values of `iter_ops`
   if summarizer is not None:
@@ -79,6 +82,7 @@ def iterate(sess, iter_ops, feed_dict,
     iter_op_vals = fetch_vals[:-1]
   else:
     iter_op_vals = fetch_vals
+
   return iter_op_vals
 
 
@@ -86,10 +90,12 @@ def iterate(sess, iter_ops, feed_dict,
 class BaseTrainer(object):
   """Abstract base class of trainer that supplements the `iterate`.
 
+  In addition, the `save` and `restore`, as well as their essential instance of
+  `tf.train.Saver`, will be defined, since initialization is entangled with them.
+
   Args:
     graph:
-      An instance of `tf.Graph` or `None`, as the graph to be trained,
-      optional.
+      An instance of `tf.Graph`, as the graph to be trained.
 
     sess:
       An instance of `tf.Session` or `None`, optional. If not `None`, the
@@ -103,12 +109,6 @@ class BaseTrainer(object):
       Optional. The execution engine to connect to. Defaults to using an
       in-process engine. See Distributed TensorFlow for more examples.
 
-    logdir:
-      `str` or `None`, as the logdir of TensorBoard, optional.
-
-    dir_to_ckpt:
-      `str` or `None`, as the directory to checkpoints, optional.
-
     init_global_step:
       `int` as the initial value of global step, optional.
 
@@ -117,58 +117,67 @@ class BaseTrainer(object):
       `tf.global_variables_initializer` as the employed initializer.
 
   Attributes:
-    `graph`, `sess`, `logdir`, summarizer (if `logdir` is not `None`), writer 
-    (if `logdir` is not `None`), `dir_to_ckpt`, `saver` (if `dir_to_ckpt` is
-    not `None`), `global_step`, `iter_ops`, `initializer`.
+    `graph`, `sess`, `saver`, `global_step`, `initializer`.
 
   Methods:
+    create_saver:
+      Abstract method. Returns an instance `tf.train.Saver()`.
+
+    create_sess:
+      Returns an instance of `tf.Session()` as `self.sess`.
+
     get_sess:
-      Abstract method. Returns an instance of `tf.Session()` as the argument
-      `sess` of `iterate()`. Only when `sess` in `__init__()` is `None` will
-      this method to be called.
+      Returns an instance of `tf.Session()` as the argument `sess` of
+      `iterate()`.
 
     get_iter_ops:
       Abstract method. Returns list of ops as the argument `iter_ops` of
       `iterate()`.
 
     get_summarizer:
-      Abstract method. Returns op as the argument `summarizer` of `iterate()`.
+      Abstract method. Returns TensorFlow `Op` or `None` as the argument
+      `summarizer` of `iterate()`.
 
     get_writer:
-      Abstract method. Returns an instance of `tf.summary.FileWriter`. This
-      method will be called only when `self.logdir` is not `None`.
-
-    get_saver:
-      Abstract method. Returns an instance of `tf.Saver`. This method will be
-      called only when `self.dir_to_ckpt` is not `None`.
+      Abstract method. Returns an instance of `tf.summary.FileWriter` or `None`
+      as the argument `writer` of `iterate()`.
 
     save:
-      Abstract method. Save the checkpoint of `self.sess` to disk
-      (`self.dir_to_ckpt`). This method will be called only when
-      `self.dir_to_ckpt` is not `None`.
+      Abstract method. Saves the checkpoint of `self.sess` to disk, or do nothing
+      is none is to be saved.
 
     restore:
-      Abstract method. Restore the checkpoint to `self.sess` from disk
-      (`self.dir_to_ckpt`). This method will be called only when
-      `self.dir_to_ckpt` is not `None`.
+      Abstract method. Restores the checkpoint to `self.sess` from disk, or do
+      nothing is none is to be saved.
+
+    get_global_step_val:
+      Returns an `int` as the temporal value of global step.
+
+    iter_body:
+      The body of iteration. It gets the arguments needed by `iterate()` and
+      runs `iterate()` once. Also, it increments the value of `self.global_step`.
 
     train:
       As the trainer trains.
   """
 
+  def __init__(self, graph, sess=None, sess_config=None,
+        sess_target='', init_global_step=0, initializer=None):
+    """This function shall be called after all codes in the `__init__()` of
+    any class that inherits this abstract base class. For two reasons:
 
-  def __init__(self, graph=None, sess=None, sess_config=None, sess_target='',
-        logdir=None, dir_to_ckpt=None, init_global_step=0, initializer=None):
+      1. Session shall be created after the graph has been completely built up
+         (thus will not be modified anymore). The reason is that the partition
+         of the resources and the edges of the graph in the session is optimized
+         based on the graph. Thus the graph shall not be modified after the
+         session having been created.
 
-    self.logdir = logdir
-    self.dir_to_ckpt = dir_to_ckpt
+      2. Some operation, like initializer, shall be placed in the end of the
+         graph.
+    """
 
-    # Notice that `tf.Graph.__init__()` needs no argument, so an abstract
-    # `get_graph` method is not essential, thus directly define `self.graph`
-    if graph is not None:
-      self.graph = graph
-    else:
-      self.graph = tf.get_default_graph()
+    # Do something that initializes a subclass that inherits this abstract base
+    # class, and then call `super().__init__()` that runs the below.
 
     # Added name-scope "auxillary_ops" into `self.graph`.
     # Building of `iter_ops` may need `self.global_step`, which thus shall be
@@ -180,95 +189,94 @@ class BaseTrainer(object):
               init_global_step, trainable=False, name='global_step')
           self.increase_global_step_op = self.global_step.assign_add(1)
 
-    self.iter_ops = self.get_iter_ops()
+    # For saving and restoring, shall be located after introducing all variables
+    # that are to be saved.
+    self.saver = self.create_saver()
 
     # Initializer shall be placed in the end of the graph.
     # XXX: Why?
     with self.graph.as_default():
-      if initializer is not None:
-        self.initializer = initializer
-      else:
-        self.initializer = tf.global_variables_initializer()
+      with tf.name_scope('auxillary_ops'):
+        with tf.name_scope('initializer'):
+          self.initializer = tf.global_variables_initializer() \
+                            if initializer is None else initializer
 
-    if self.logdir is not None:
-      self.summarizer = self.get_summarizer()
-      self.writer = self.get_writer()
-
-    if self.dir_to_ckpt is not None:
-      ensure_directory(self.dir_to_ckpt)
-      self.saver = self.get_saver()
-
-    if sess is not None:
-      self.sess = sess
-    else:
+    if sess is None:
       self.sess_config = sess_config
       self.sess_target = sess_target
-      self.sess = self.get_sess()
+      self.sess = self.create_sess()
+    else:
+      self.sess = sess
 
-    # Restore checkpoint in `self.dir_to_ckpt` to `self.sess`
-    if self.dir_to_ckpt is not None:
-      self.restored = self.restore()
+    # Restore checkpoint to `self.sess` by `self.saver`
+    self.restored = self.restore()
 
 
   @abc.abstractmethod
-  def get_sess(self):
-    """Returns an instance of `tf.Session()` as the argument `sess` of
-    `iterate()`. Only when `sess` in `__init__()` is `None` will this method
-    to be called."""
+  def create_saver(self):
+    """Abstract method. Returns an instance `tf.train.Saver()`.
+
+    NOTE:
+      Saver shall be initialized within `self.graph`.
+    """
     pass
 
 
   @abc.abstractmethod
+  def create_sess(self):
+    """Abstract method. Returns an instance of `tf.Session()` as `self.sess`.
+    This method will be called if and only if the argument `sess` in the
+    `self.__init__()` is `None` (as default)."""
+    pass
+
+
+  def get_sess(self):
+    """Returns an instance of `tf.Session()` as the argument `sess` of
+    `iterate()`.
+
+    Since there's only one session is needed through out the training process,
+    we just return the `self.sess` created by method `self.create_sess`.
+    """
+    return self.sess
+
+
+  @abc.abstractmethod
   def get_iter_ops(self):
-    """Returns list of ops as the argument `iter_ops` of `iterate()`."""
+    """Abstract method. Returns list of ops as the argument `iter_ops` of
+    `iterate()`."""
     pass
 
 
   @abc.abstractmethod
   def get_summarizer(self):
-    """Returns op as the argument `summarizer` of `iterate()`."""
+    """Abstract method. Returns TensorFlow `Op` or `None` as the argument
+    `summarizer` of `iterate()`."""
     pass
 
 
   @abc.abstractmethod
   def get_writer(self):
-    """Returns an instance of `tf.summary.FileWriter`. This method will be
-    called only when `self.logdir` is not `None`."""
-    pass
-
-
-  @abc.abstractmethod
-  def get_saver(self):
-    """Returns an instance of `tf.Saver`. This method will be
-    called only when `self.dir_to_ckpt` is not `None`."""
+    """Abstract method. Returns an instance of `tf.summary.FileWriter` or `None`
+    as the argument `writer` of `iterate()`."""
     pass
 
 
   @abc.abstractmethod
   def save(self):
-    """Save the checkpoint of `self.sess` to disk (`self.dir_to_ckpt`). This
-    method will be called only when `self.dir_to_ckpt` is not `None`."""
+    """Abstract method. Saves the checkpoint of `self.sess` to disk, or do
+    nothing is none is to be saved."""
     pass
 
 
   @abc.abstractmethod
   def restore(self):
-    """Restore the checkpoint to `self.sess` from disk (`self.dir_to_ckpt`). This
-    method will be called only when `self.dir_to_ckpt` is not `None`.
+    """Abstract method. Restores the checkpoint to `self.sess` from disk, or do
+    nothing is none is to be saved.
 
     Returns:
       `bool`, being `True` if sucessfully restored from checkpoint; else `False`.
     """
     pass
-
-
-  def initialize_if_not_restored(self):
-    """Notice that re-initializing variables will cancel all have restored."""
-    if self.dir_to_ckpt is None:
-      self.sess.run(self.initializer)
-    else:
-      if not self.restored:
-        self.sess.run(self.initializer)
 
 
   def get_global_step_val(self):
@@ -277,20 +285,29 @@ class BaseTrainer(object):
     return global_step_val
 
 
-  def get_to_save_generator(self, skip_step=100):
-    """XXX"""
-    i = 0
-    while True:
-      i += 1
-      yield True if i % skip_step == 0 else False
+  def iter_body(self, feed_dict_generator, options, run_metadata):
+    """The body of iteration. It gets the arguments needed by `iterate()` and
+    runs `iterate()` once. Also, it increments the value of `self.global_step`.
 
+    Appending anything into this `iter_body()` can be simply archived by re-
+    implementing `iter_body()` with `super().iter_body(...)`.
+    """
 
-  def get_to_summarize_generator(self, skip_step=100):
-    """XXX"""
-    i = 0
-    while True:
-      i += 1
-      yield True if i % 100 == 0 else False
+    # Get the arguments needed by `iterate()`
+    sess = self.get_sess()
+    iter_ops = self.get_iter_ops()
+    feed_dict = next(feed_dict_generator)
+    summarizer = self.get_summarizer()
+    writer = self.get_writer()
+    global_step_val = self.get_global_step_val()
+
+    # Run `iterate()` once
+    iterate(sess, iter_ops, feed_dict, summarizer=summarizer,
+            writer=writer, global_step_val=global_step_val,
+            options=options, run_metadata=run_metadata)
+
+    # Also, increment the value of `self.global_step`
+    self.sess.run(self.increase_global_step_op)
 
 
   def train(self, n_iters, feed_dict_generator,
@@ -304,15 +321,6 @@ class BaseTrainer(object):
       feed_dict_generator:
         A generator that emits a feed_dict at each calling of `next()`.
 
-      initializer:
-        XXX
-
-      saver_skip_step:
-        `int`, as the skip-step for calling `self.save()`, optional.
-
-      writer_skip_step:
-        `int`, as the skip-step for writing summary to TensorBoard, optional.
-
       options:
         A `[RunOptions]` protocol buffer or `None`, as the associated argument
         of `tf.Session.run()`, optional.
@@ -325,12 +333,16 @@ class BaseTrainer(object):
         `bool`.
     """
 
-    self.initialize_if_not_restored()
-
-    if self.logdir is not None:
-      to_summarize = self.get_to_summarize_generator()
-    if self.dir_to_ckpt is not None:
-      to_save = self.get_to_save_generator()
+    try:
+      if not self.restored:
+        self.sess.run(self.initializer)
+        if verbose:
+          print('INFO - Restored.')
+    except NameError:
+      # meaning that `self.restored` is not defined, thus not restored.
+      self.sess.run(self.initializer)
+      if verbose:
+        print('INFO - Initialize without restoring.')
 
     if verbose:
       global_step_val = tf.train.global_step(self.sess, self.global_step)
@@ -340,33 +352,12 @@ class BaseTrainer(object):
     for i in tqdm(range(n_iters)):  # XXX
 
       try:
-        # Not summarize and write summary if not ...
-        summarizer = None
-        writer = None
-
-        if self.logdir is not None:
-          if next(to_summarize) is True:
-            # Shall summarize and write summary
-            summarizer = self.summarizer
-            writer = self.writer
-
-        feed_dict = next(feed_dict_generator)
-        global_step_val = self.get_global_step_val()
-        iterate(self.sess, self.iter_ops, feed_dict,
-                summarizer=summarizer, writer=writer,
-                global_step=global_step_val, options=options,
-                run_metadata=run_metadata)
-        self.sess.run(self.increase_global_step_op)
+        self.iter_body(feed_dict_generator, options, run_metadata)
 
       except StopIteration:
+        # Meaning that the `feed_dict_generator` has been exhausted.
         print('INFO - No more training data to iterate.')
         break
 
-      # Save at `skip_step`
-      if self.dir_to_ckpt is not None:
-        if next(to_save) is True:
-          self.save()
-
-    # Finally
-    if verbose and self.dir_to_ckpt is not None:
-      print('INFO - Saved to {}.'.format(self.dir_to_ckpt))
+    # Save the checkpoint to disk at the end of training
+    self.save()

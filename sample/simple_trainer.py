@@ -13,16 +13,19 @@ from tensorflow.python import debug as tf_debug
 from .base_trainer import BaseTrainer
 
 
-def get_sess(graph, sess_config, sess_target, debug):
-  sess = tf.Session(graph=graph,
-      config=sess_config, target=sess_target)
+
+def create_sess(graph, sess_config, sess_target, debug):
+
+  sess = tf.Session(graph=graph, config=sess_config, target=sess_target)
+
   if debug:
     sess = tf_debug.LocalCLIDebugWrapperSession(sess)
     sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+
   return sess
 
 
-def get_iter_ops(graph, loss, gvs, optimizer):
+def create_train_ops(graph, loss, gvs, optimizer):
 
   with graph.as_default():
 
@@ -39,7 +42,14 @@ def get_iter_ops(graph, loss, gvs, optimizer):
   return [train_op]
 
 
-def get_summarizer(graph, log_vars):
+def create_summarizer(graph, log_vars):
+  """
+  NOTE:
+    Generally, one summarizer is enough. When you needs two, e.g. one for
+    summarizing training process and the other validation process, you can
+    just use one summary_op like `tf.summary.scalar(name, value)`, with
+    `name` a placeholder of stringy type. and feed in `feed_dict_generator`.
+  """
 
   with graph.as_default():
 
@@ -59,15 +69,17 @@ def get_summarizer(graph, log_vars):
   return summarizer
 
 
-def get_writer(logdir, graph):
+def create_writer(graph, logdir):
   writer = tf.summary.FileWriter(logdir, graph)
   return writer
 
-def get_saver(graph):
+
+def create_saver(graph):
   # Saver shall be initialized within the graph
   with graph.as_default():
     saver = tf.train.Saver()
   return saver
+
 
 def save(saver, sess, dir_to_ckpt, global_step):
   saver.save(
@@ -75,7 +87,9 @@ def save(saver, sess, dir_to_ckpt, global_step):
       os.path.join(dir_to_ckpt, 'checkpoint'),
       global_step=global_step)
 
+
 def restore(dir_to_ckpt, saver, sess):
+
   # Get checkpoint
   # CAUTION that the arg of `get_checkpoint_state` is
   # `checkpoint_dir`, i.e. the directory of the `checkpoint`
@@ -94,40 +108,77 @@ def restore(dir_to_ckpt, saver, sess):
 class SimpleTrainer(BaseTrainer):
   """With the basic implementation for each method."""
 
-  def __init__(self, loss=None, gvs=None, optimizer=None,
-               log_vars=None, debug=False, *args, **kwargs):
+  def __init__(self, graph=None, loss=None, gvs=None, optimizer=None,
+               logdir=None, log_vars=None, writer_skip_step=10,
+               dir_to_ckpt=None, debug=False,  *args, **kwargs):
 
+    self.graph = tf.get_default_graph() if graph is None \
+                 else graph
+
+    # For optimization
     self.loss = loss
     self.gvs = gvs
-    self.log_vars = log_vars if log_vars is not None \
-                    else [self.loss]
+    self.optimizer = tf.train.AdamOptimizer(0.01) if optimizer is None \
+                     else optimizer
+    self.train_ops = create_train_ops(
+        self.graph, self.loss, self.gvs, self.optimizer)
 
-    self.optimizer = optimizer if optimizer is not None \
-                     else tf.train.AdamOptimizer(0.01)
+    # For TensorBoard
+    self.logdir = logdir
+    self.log_vars = [self.loss] if log_vars is None \
+                    else log_vars
+    self.writer_skip_step = writer_skip_step
+    self.summarizer = create_summarizer(self.graph, self.log_vars)
+    self.writer = create_writer(self.graph, self.logdir)
 
+    # For saving checkpoint
+    self.dir_to_ckpt = dir_to_ckpt
+
+    # For debug
+    # Needed in `self.create_sess()`, thus before calling `super()`
     self.debug = debug
 
-    super(SimpleTrainer, self).__init__(*args, **kwargs)
+    # Recall that `super()` can only be called in the end. (C.f. the docsting of
+    # `BaseTrainer`.)
+    super().__init__(graph=self.graph, *args, **kwargs)
 
 
-  def get_sess(self):
-    return get_sess(self.graph, self.sess_config,
-                    self.sess_target, self.debug)
+  def create_saver(self):
+    saver = create_saver(self.graph)
+    return saver
+
+
+  def create_sess(self):
+    sess = create_sess(self.graph, self.sess_config,
+                       self.sess_target, self.debug)
+    return sess
+
 
   def get_iter_ops(self):
-    return get_iter_ops(self.graph, self.loss, self.gvs, self.optimizer)
+    return self.train_ops
+
 
   def get_summarizer(self):
-    return get_summarizer(self.graph, self.log_vars)
+    if self.global_step % self.writer_skip_step == 0:
+      return self.summarizer
+    else:
+      return None
+
 
   def get_writer(self):
-    return get_writer(self.logdir, self.graph)
+    if self.global_step % self.writer_skip_step == 0:
+      return self.writer
+    else:
+      return None
 
-  def get_saver(self):
-    return get_saver(self.graph)
 
   def save(self):
-    return save(self.saver, self.sess, self.dir_to_ckpt, self.global_step)
+    if self.dir_to_ckpt is not None:
+      save(self.saver, self.sess, self.dir_to_ckpt, self.global_step)
+
 
   def restore(self):
-    return restore(self.dir_to_ckpt, self.saver, self.sess)
+    if self.dir_to_ckpt is None:
+      return None
+    else:
+      return restore(self.dir_to_ckpt, self.saver, self.sess)

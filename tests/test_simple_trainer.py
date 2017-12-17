@@ -11,10 +11,7 @@ sys.path.append('../')
 from sample.simple_trainer import SimpleTrainer
 import numpy as np
 import tensorflow as tf
-try:
-    from tensorflow.examples.tutorials.mnist.input_data import read_data_sets
-except:
-    raise Exception('Your TF version < 1.4.0.')
+from tensorflow.examples.tutorials.mnist.input_data import read_data_sets
 
 
 # Add `source_url` since the data cannot be downloaded via Python
