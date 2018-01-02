@@ -51,26 +51,35 @@ def create_summarizer(graph, log_vars):
     `name` a placeholder of stringy type. and feed in `feed_dict_generator`.
   """
 
-  with graph.as_default():
+  if log_vars is None:
 
-    with tf.name_scope('summarization'):
+    summarizer = None
 
-      for v in log_vars:
-        if v.shape == tf.TensorShape([]):
-          # `v` is a scalar.
-          tf.summary.scalar(v.name, v)
-        else:
-          # `v` is a tensor.
-          tf.summary.tensor_summary(v.name, v)
-        tf.summary.histogram(v.name, v)
+  else:
 
-      summarizer = tf.summary.merge_all()
+    with graph.as_default():
+
+      with tf.name_scope('summarization'):
+
+        for v in log_vars:
+          if v.shape == tf.TensorShape([]):
+            # `v` is a scalar.
+            tf.summary.scalar(v.name, v)
+          else:
+            # `v` is a tensor.
+            tf.summary.tensor_summary(v.name, v)
+          tf.summary.histogram(v.name, v)
+
+        summarizer = tf.summary.merge_all()
 
   return summarizer
 
 
 def create_writer(graph, logdir):
-  writer = tf.summary.FileWriter(logdir, graph)
+  if logdir is None:
+    writer = None
+  else:
+    writer = tf.summary.FileWriter(logdir, graph)
   return writer
 
 
