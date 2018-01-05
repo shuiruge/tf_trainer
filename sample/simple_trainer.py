@@ -11,6 +11,7 @@ import os
 import tensorflow as tf
 from tensorflow.python import debug as tf_debug
 from .base_trainer import BaseTrainer
+from .utils import ensure_directory
 
 
 
@@ -142,6 +143,8 @@ class SimpleTrainer(BaseTrainer):
 
     # For saving checkpoint
     self.dir_to_ckpt = dir_to_ckpt
+    if self.dir_to_ckpt is not None:
+      ensure_directory(self.dir_to_ckpt)
 
     # For debug
     # Needed in `self.create_sess()`, thus before calling `super()`
@@ -168,14 +171,14 @@ class SimpleTrainer(BaseTrainer):
 
 
   def get_summarizer(self):
-    if self.global_step % self.writer_skip_step == 0:
+    if self.get_global_step_val() % self.writer_skip_step == 0:
       return self.summarizer
     else:
       return None
 
 
   def get_writer(self):
-    if self.global_step % self.writer_skip_step == 0:
+    if self.get_global_step_val() % self.writer_skip_step == 0:
       return self.writer
     else:
       return None
