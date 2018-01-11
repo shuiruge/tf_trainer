@@ -3,7 +3,7 @@
 """This script involves `BaseFineTuner`"""
 
 
-from base_fine_tuner import BaseFineTuner
+from tftrainer.finetuners.base_fine_tuner import BaseFineTuner
 
 
 class BaseTensorFlowFineTuner(BaseFineTuner):

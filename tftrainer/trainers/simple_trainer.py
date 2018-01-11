@@ -10,8 +10,8 @@ C.f. https://www.tensorflow.org/get_started/mnist/beginners.
 import os
 import tensorflow as tf
 from tensorflow.python import debug as tf_debug
-from .base_trainer import BaseTrainer
-from .utils import ensure_directory
+from tftrainer.trainers.base_trainer import BaseTrainer
+from tftrainer.utils.helpers import ensure_directory
 
 
 
