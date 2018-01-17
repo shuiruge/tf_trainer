@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 
 NAME = 'tftrainer'
-DESCRIPTION = 'TensorFlow Trainer"
+DESCRIPTION = 'TensorFlow Trainer'
 AUTHOR = 'shuiruge'
 AUTHOR_EMAIL = 'shuiruge@hotmail.com'
 URL = 'https://github.com/shuiruge/tf_trainer/'

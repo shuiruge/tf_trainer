@@ -6,9 +6,7 @@ XXX
 C.f. https://www.tensorflow.org/get_started/mnist/beginners.
 """
 
-import sys
-sys.path.append('../')
-from sample.simple_trainer import SimpleTrainer
+from tftrainer import SimpleTrainer
 import numpy as np
 import tensorflow as tf
 from tensorflow.examples.tutorials.mnist.input_data import read_data_sets

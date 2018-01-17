@@ -184,6 +184,14 @@ class SimpleTrainer(BaseTrainer):
       return None
 
 
+  def get_options(self):
+    return None
+
+
+  def get_run_metadata(self):
+    return None
+
+
   def save(self):
     if self.dir_to_ckpt is not None:
       save(self.saver, self.sess, self.dir_to_ckpt, self.global_step)

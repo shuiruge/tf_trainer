@@ -160,8 +160,8 @@ class BaseTrainer(object):
       As the trainer trains.
   """
 
-  def __init__(self, graph, sess=None, sess_config=None,
-        sess_target='', init_global_step=0, initializer=None):
+  def __init__(self, graph, sess=None, sess_config=None, sess_target='',
+               init_global_step=0, initializer=None, verbose=True):
     """This function shall be called after all codes in the `__init__()` of
     any class that inherits this abstract base class. For two reasons:
 
@@ -178,6 +178,8 @@ class BaseTrainer(object):
     # Do something that initializes a subclass that inherits this abstract base
     # class, and then call `super().__init__()` that runs the below.
 
+    self.verbose = verbose
+
     # Added name-scope "auxillary_ops" into `self.graph`.
     # Building of `iter_ops` may need `self.global_step`, which thus shall be
     # defined in front.
@@ -188,8 +190,8 @@ class BaseTrainer(object):
               init_global_step, trainable=False, name='global_step')
           self.increase_global_step_op = self.global_step.assign_add(1)
 
-    # For saving and restoring, shall be located after introducing all variables
-    # that are to be saved.
+    # For saving and restoring. This shall be located after introducing all
+    # variables that are to be saved and restored.
     self.saver = self.create_saver()
 
     # Initializer shall be placed in the end of the graph.
@@ -200,6 +202,7 @@ class BaseTrainer(object):
           self.initializer = tf.global_variables_initializer() \
                             if initializer is None else initializer
 
+    # Create session
     if sess is None:
       self.sess_config = sess_config
       self.sess_target = sess_target
@@ -261,6 +264,20 @@ class BaseTrainer(object):
 
 
   @abc.abstractmethod
+  def get_options(self):
+    """Abstract method. Returns a`[RunOptions]` protocol buffer or `None`, as
+      the argument `options` of `iterate()`."""
+    pass
+
+
+  @abc.abstractmethod
+  def get_run_metadata(self):
+    """Abstract method. Returns a `[RunMetadata]` protocol buffer or `None`, as
+    the argument `run_metadata` of `iterate()`."""
+    pass
+
+
+  @abc.abstractmethod
   def save(self):
     """Abstract method. Saves the checkpoint of `self.sess` to disk, or do
     nothing is none is to be saved."""
@@ -284,7 +301,21 @@ class BaseTrainer(object):
     return global_step_val
 
 
-  def iter_body(self, feed_dict_generator, options, run_metadata):
+  def initialize(self):
+    """Run `self.initializer` if has not been restored yet."""
+    try:
+      if not self.restored:
+        self.sess.run(self.initializer)
+        if self.verbose:
+          print('INFO - Restored.')
+    except NameError:
+      # meaning that `self.restored` is not defined, thus not restored.
+      self.sess.run(self.initializer)
+      if self.verbose:
+        print('INFO - Initialize without restoring.')
+
+
+  def iter_body(self, feed_dict_generator):
     """The body of iteration. It gets the arguments needed by `iterate()` and
     runs `iterate()` once. Also, it increments the value of `self.global_step`.
 
@@ -299,6 +330,8 @@ class BaseTrainer(object):
     summarizer = self.get_summarizer()
     writer = self.get_writer()
     global_step_val = self.get_global_step_val()
+    options = self.get_options()
+    run_metadata = self.get_run_metadata()
 
     # Run `iterate()` once
     iterate(sess, iter_ops, feed_dict, summarizer=summarizer,
@@ -309,8 +342,7 @@ class BaseTrainer(object):
     self.sess.run(self.increase_global_step_op)
 
 
-  def train(self, n_iters, feed_dict_generator,
-            options=None, run_metadata=None, verbose=True):
+  def train(self, n_iters, feed_dict_generator):
     """As the trainer trains.
 
     Args:
@@ -319,31 +351,12 @@ class BaseTrainer(object):
 
       feed_dict_generator:
         A generator that emits a feed_dict at each calling of `next()`.
-
-      options:
-        A `[RunOptions]` protocol buffer or `None`, as the associated argument
-        of `tf.Session.run()`, optional.
-
-      run_metadata:
-        A `[RunMetadata]` protocol buffer or `None`, as the associated argument
-        of `tf.Session.run()`, optional.
-
-      verbose:
-        `bool`.
     """
 
-    try:
-      if not self.restored:
-        self.sess.run(self.initializer)
-        if verbose:
-          print('INFO - Restored.')
-    except NameError:
-      # meaning that `self.restored` is not defined, thus not restored.
-      self.sess.run(self.initializer)
-      if verbose:
-        print('INFO - Initialize without restoring.')
+    # Initialize
+    self.initialize()
 
-    if verbose:
+    if self.verbose:
       global_step_val = tf.train.global_step(self.sess, self.global_step)
       print('INFO - Start training at global step {}.'.format(global_step_val))
 
@@ -351,7 +364,7 @@ class BaseTrainer(object):
     for i in tqdm(range(n_iters)):  # XXX
 
       try:
-        self.iter_body(feed_dict_generator, options, run_metadata)
+        self.iter_body(feed_dict_generator)
 
       except StopIteration:
         # Meaning that the `feed_dict_generator` has been exhausted.
