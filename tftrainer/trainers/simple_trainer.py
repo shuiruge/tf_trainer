@@ -202,3 +202,25 @@ class SimpleTrainer(BaseTrainer):
       return None
     else:
       return restore(self.dir_to_ckpt, self.saver, self.sess)
+
+
+  def iter_body(self, feed_dict_generator):
+    """The body of iteration. It gets the arguments needed by `iterate()` and
+    runs `iterate()` once. Also, it increments the value of `self.global_step`.
+
+    Appending anything into this `iter_body()` can be simply archived by re-
+    implementing `iter_body()` with `super().iter_body(...)`.
+    """
+
+    iter_ops_val = super().iter_body(feed_dict_generator)
+
+    self.shall_stop(iter_ops_val)
+
+    return iter_ops_val
+
+
+  def shall_stop(self):
+    if self.loss is None:
+      self.shall_stop_by_loss()
+    else:
+      self.shall_stop_by_gradients()

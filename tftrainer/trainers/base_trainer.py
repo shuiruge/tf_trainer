@@ -56,7 +56,8 @@ def iterate(sess, iter_ops, feed_dict, summarizer=None, writer=None,
       `tf.Session.run()`, optional.
 
   Returns:
-    List of the values of the `iter_ops`.
+    Dictionary with keys the `name` (attribute) of the `iter_ops`, and values
+    the values.
   """
 
   # Get `fetches`
@@ -78,9 +79,15 @@ def iterate(sess, iter_ops, feed_dict, summarizer=None, writer=None,
   # Return the values of `iter_ops`
   if summarizer is not None:
     # The last element of `fetch_vals` will be the `summary`
-    iter_op_vals = fetch_vals[:-1]
+    iter_op_vals = {
+        fetch.name: fetch_vals[i]
+        for i, fetch in enumerate(fetches[:-1])
+    }
   else:
-    iter_op_vals = fetch_vals
+    iter_op_vals = {
+        fetch.name: fetch_vals[i]
+        for i, fetch in enumerate(fetches)
+    }
 
   return iter_op_vals
 
@@ -152,7 +159,7 @@ class BaseTrainer(object):
     get_global_step_val:
       Returns an `int` as the temporal value of global step.
 
-    iter_body:
+    iterate_body:
       The body of iteration. It gets the arguments needed by `iterate()` and
       runs `iterate()` once. Also, it increments the value of `self.global_step`.
 
@@ -178,17 +185,14 @@ class BaseTrainer(object):
     # Do something that initializes a subclass that inherits this abstract base
     # class, and then call `super().__init__()` that runs the below.
 
+    self.sess_config = sess_config
+    self.sess_target = sess_target
     self.verbose = verbose
 
-    # Added name-scope "auxillary_ops" into `self.graph`.
     # Building of `iter_ops` may need `self.global_step`, which thus shall be
     # defined in front.
-    with self.graph.as_default():
-      with tf.name_scope('auxillary_ops'):
-        with tf.name_scope('increase_global_step_op'):
-          self.global_step = tf.Variable(
-              init_global_step, trainable=False, name='global_step')
-          self.increase_global_step_op = self.global_step.assign_add(1)
+    self.global_step, self.increase_global_step_op = \
+        self.build_global_step(init_global_step)
 
     # For saving and restoring. This shall be located after introducing all
     # variables that are to be saved and restored.
@@ -196,22 +200,58 @@ class BaseTrainer(object):
 
     # Initializer shall be placed in the end of the graph.
     # XXX: Why?
-    with self.graph.as_default():
-      with tf.name_scope('auxillary_ops'):
-        with tf.name_scope('initializer'):
-          self.initializer = tf.global_variables_initializer() \
-                            if initializer is None else initializer
+    self.initializer = self.build_initializer(initializer)
 
     # Create session
-    if sess is None:
-      self.sess_config = sess_config
-      self.sess_target = sess_target
-      self.sess = self.create_sess()
-    else:
-      self.sess = sess
+    self.sess = self.create_sess() if sess is None else sess
 
     # Restore checkpoint to `self.sess` by `self.saver`
     self.restored = self.restore()
+
+
+  def build_global_step(self, init_global_step):
+    """Builds and returns `global_step` and `increase_global_step_op` which
+    increments the value of `global_step` at each call.
+
+    Args:
+      init_global_step:
+        `int` as the initial value of global step, optional.
+
+    Returns:
+      `global_step` and `increase_global_step_op` which increments the value
+      of `global_step` at each call.
+    """
+
+    with self.graph.as_default():
+
+      with tf.name_scope('increase_global_step_op'):
+
+        global_step = tf.Variable(
+            init_global_step, trainable=False, name='global_step')
+
+        increase_global_step_op = global_step.assign_add(1)
+
+    return global_step, increase_global_step_op
+
+
+  def build_initializer(self, initializer):
+    """Builds and returns an initializer.
+
+    Args:
+      initializer:
+        A TenosrFlow initializer, or `None`.
+
+    Returns:
+      A TenosrFlow initializer
+    """
+
+    with self.graph.as_default():
+
+      with tf.name_scope('initializer'):
+        _initializer = tf.global_variables_initializer() \
+                       if initializer is None else initializer
+
+    return _initializer
 
 
   @abc.abstractmethod
@@ -253,28 +293,28 @@ class BaseTrainer(object):
   def get_summarizer(self):
     """Abstract method. Returns TensorFlow `Op` or `None` as the argument
     `summarizer` of `iterate()`."""
-    pass
+    return None
 
 
   @abc.abstractmethod
   def get_writer(self):
     """Abstract method. Returns an instance of `tf.summary.FileWriter` or `None`
     as the argument `writer` of `iterate()`."""
-    pass
+    return None
 
 
   @abc.abstractmethod
   def get_options(self):
     """Abstract method. Returns a`[RunOptions]` protocol buffer or `None`, as
       the argument `options` of `iterate()`."""
-    pass
+    return None
 
 
   @abc.abstractmethod
   def get_run_metadata(self):
     """Abstract method. Returns a `[RunMetadata]` protocol buffer or `None`, as
     the argument `run_metadata` of `iterate()`."""
-    pass
+    return None
 
 
   @abc.abstractmethod
@@ -315,31 +355,51 @@ class BaseTrainer(object):
         print('INFO - Initialize without restoring.')
 
 
-  def iter_body(self, feed_dict_generator):
+  def get_iterate_kwargs(self, feed_dict_generator):
+    """Get the kwargs of `iterate()`."""
+
+    iterate_kwargs = {
+        'sess':
+            self.get_sess(),
+        'iter_ops':
+            self.get_iter_ops(),
+        'feed_dict':
+            next(feed_dict_generator),
+        'summarizer':
+            self.get_summarizer(),
+        'writer':
+            self.get_writer(),
+        'global_step_val':
+            self.get_global_step_val(),
+        'options':
+            self.get_options(),
+        'run_metadata':
+            self.get_run_metadata(),
+    }
+
+    return iterate_kwargs
+
+
+
+  def iterate_body(self, feed_dict_generator):
     """The body of iteration. It gets the arguments needed by `iterate()` and
     runs `iterate()` once. Also, it increments the value of `self.global_step`.
 
-    Appending anything into this `iter_body()` can be simply archived by re-
-    implementing `iter_body()` with `super().iter_body(...)`.
+    Appending anything into this `iterate_body()` can be simply archived by
+    re-implementing `iterate_body()` with `super().iterate_body(...)`.
+
+    Returns:
+      Dictionary with keys the `name` (attribute) of the `iter_ops` from
+      `self.get_iter_ops()`, and values the values.
     """
 
-    # Get the arguments needed by `iterate()`
-    sess = self.get_sess()
-    iter_ops = self.get_iter_ops()
-    feed_dict = next(feed_dict_generator)
-    summarizer = self.get_summarizer()
-    writer = self.get_writer()
-    global_step_val = self.get_global_step_val()
-    options = self.get_options()
-    run_metadata = self.get_run_metadata()
-
     # Run `iterate()` once
-    iterate(sess, iter_ops, feed_dict, summarizer=summarizer,
-            writer=writer, global_step_val=global_step_val,
-            options=options, run_metadata=run_metadata)
+    iter_op_vals = iterate(**self.get_iterate_kwargs(feed_dict_generator))
 
     # Also, increment the value of `self.global_step`
     self.sess.run(self.increase_global_step_op)
+
+    return iter_op_vals
 
 
   def train(self, n_iters, feed_dict_generator):
@@ -357,14 +417,14 @@ class BaseTrainer(object):
     self.initialize()
 
     if self.verbose:
-      global_step_val = tf.train.global_step(self.sess, self.global_step)
+      global_step_val = self.get_global_step_val()
       print('INFO - Start training at global step {}.'.format(global_step_val))
 
     # Iterations
     for i in tqdm(range(n_iters)):  # XXX
 
       try:
-        self.iter_body(feed_dict_generator)
+        self.iterate_body(feed_dict_generator)
 
       except StopIteration:
         # Meaning that the `feed_dict_generator` has been exhausted.
