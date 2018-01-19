@@ -56,8 +56,7 @@ def iterate(sess, iter_ops, feed_dict, summarizer=None, writer=None,
       `tf.Session.run()`, optional.
 
   Returns:
-    Dictionary with keys the `name` (attribute) of the `iter_ops`, and values
-    the values.
+    List of numpy arraries, as the values of `iter_ops` in this iteration.
   """
 
   # Get `fetches`
@@ -73,48 +72,34 @@ def iterate(sess, iter_ops, feed_dict, summarizer=None, writer=None,
 
   # Write to TensorBoard
   if summarizer is not None and writer is not None:
-    _, summary = fetch_vals
+    summary = fetch_vals[-1]
     writer.add_summary(summary, global_step=global_step_val)
 
   # Return the values of `iter_ops`
   if summarizer is not None:
     # The last element of `fetch_vals` will be the `summary`
-    iter_op_vals = {
-        fetch.name: fetch_vals[i]
-        for i, fetch in enumerate(fetches[:-1])
-    }
+    iter_op_vals = fetch_vals[:-1]
   else:
-    iter_op_vals = {
-        fetch.name: fetch_vals[i]
-        for i, fetch in enumerate(fetches)
-    }
-
+    iter_op_vals = fetch_vals
   return iter_op_vals
 
 
 
 class BaseTrainer(object):
   """Abstract base class of trainer that supplements the `iterate`.
+  
+  In addition, it will:
 
-  In addition, the `save` and `restore`, as well as their essential instance of
-  `tf.train.Saver`, will be defined, since initialization is entangled with them.
+    1. make initialization;
+
+    2. the `save` and `restore`, as well as their essential instance of
+       `tf.train.Saver`, will be defined, since initialization is entangled
+       with them;
+
+    3. a global-step-variable and its incrementation-`Op` will be defined.
+    
 
   Args:
-    graph:
-      An instance of `tf.Graph`, as the graph to be trained.
-
-    sess:
-      An instance of `tf.Session` or `None`, optional. If not `None`, the
-      method `self.get_sess()` will not be called.
-
-    sess_config:
-      Optional. A ConfigProto protocol buffer with configuration options for
-      the session.
-
-    sess_target:
-      Optional. The execution engine to connect to. Defaults to using an
-      in-process engine. See Distributed TensorFlow for more examples.
-
     init_global_step:
       `int` as the initial value of global step, optional.
 
@@ -123,15 +108,19 @@ class BaseTrainer(object):
       `tf.global_variables_initializer` as the employed initializer.
 
   Attributes:
-    `graph`, `sess`, `saver`, `global_step`, `initializer`.
+    saver:
+      An instance of `tf.train.Saver`.
+
+    global_step:
+      An un-trainable instance of `tf.Veriable`.
+
+    initializer:
+      An instance of TensorFlow initializer.
+
+    restored:
+      `bool`, for labeling if method `restore()` has ever been called.
 
   Methods:
-    create_saver:
-      Abstract method. Returns an instance `tf.train.Saver()`.
-
-    create_sess:
-      Returns an instance of `tf.Session()` as `self.sess`.
-
     get_sess:
       Returns an instance of `tf.Session()` as the argument `sess` of
       `iterate()`.
@@ -148,27 +137,31 @@ class BaseTrainer(object):
       Abstract method. Returns an instance of `tf.summary.FileWriter` or `None`
       as the argument `writer` of `iterate()`.
 
-    save:
-      Abstract method. Saves the checkpoint of `self.sess` to disk, or do nothing
-      is none is to be saved.
-
-    restore:
-      Abstract method. Restores the checkpoint to `self.sess` from disk, or do
-      nothing is none is to be saved.
-
     get_global_step_val:
       Returns an `int` as the temporal value of global step.
 
     iterate_body:
       The body of iteration. It gets the arguments needed by `iterate()` and
-      runs `iterate()` once. Also, it increments the value of `self.global_step`.
+      runs `iterate()` once. Also, it increments the value of
+      `self.global_step`.
+
+    create_saver:
+      Abstract method. Returns an instance `tf.train.Saver()`.
+
+    save:
+      Abstract method. Saves the checkpoint of `self.sess` to disk, or do
+      nothing is none is to be saved.
+
+    restore:
+      Abstract method. Restores the checkpoint to `self.sess` from disk, or
+      do nothing is none is to be saved. Calling this method SHALL modify the
+      attribute `self.has_restored` to be `True`.
 
     train:
       As the trainer trains.
   """
 
-  def __init__(self, graph, sess=None, sess_config=None, sess_target='',
-               init_global_step=0, initializer=None, verbose=True):
+  def __init__(self, init_global_step=0, initializer=None, verbose=True):
     """This function shall be called after all codes in the `__init__()` of
     any class that inherits this abstract base class. For two reasons:
 
@@ -184,10 +177,13 @@ class BaseTrainer(object):
 
     # Do something that initializes a subclass that inherits this abstract base
     # class, and then call `super().__init__()` that runs the below.
+    # `tf.Session` shall be created AFTER `super().__init__()`, when finishing
+    # building `self.graph`.
 
-    self.sess_config = sess_config
-    self.sess_target = sess_target
     self.verbose = verbose
+
+    # Initialize
+    self.has_restored = False
 
     # Building of `iter_ops` may need `self.global_step`, which thus shall be
     # defined in front.
@@ -197,16 +193,11 @@ class BaseTrainer(object):
     # For saving and restoring. This shall be located after introducing all
     # variables that are to be saved and restored.
     self.saver = self.create_saver()
+    print(type(self.saver))
 
     # Initializer shall be placed in the end of the graph.
     # XXX: Why?
     self.initializer = self.build_initializer(initializer)
-
-    # Create session
-    self.sess = self.create_sess() if sess is None else sess
-
-    # Restore checkpoint to `self.sess` by `self.saver`
-    self.restored = self.restore()
 
 
   def build_global_step(self, init_global_step):
@@ -234,44 +225,13 @@ class BaseTrainer(object):
     return global_step, increase_global_step_op
 
 
-  def build_initializer(self, initializer):
-    """Builds and returns an initializer.
-
-    Args:
-      initializer:
-        A TenosrFlow initializer, or `None`.
-
-    Returns:
-      A TenosrFlow initializer
-    """
-
-    with self.graph.as_default():
-
-      with tf.name_scope('initializer'):
-        _initializer = tf.global_variables_initializer() \
-                       if initializer is None else initializer
-
-    return _initializer
+  def get_global_step_val(self):
+    """Returns an `int` as the temporal value of global step."""
+    global_step_val = tf.train.global_step(self.sess, self.global_step)
+    return global_step_val
 
 
   @abc.abstractmethod
-  def create_saver(self):
-    """Abstract method. Returns an instance `tf.train.Saver()`.
-
-    NOTE:
-      Saver shall be initialized within `self.graph`.
-    """
-    pass
-
-
-  @abc.abstractmethod
-  def create_sess(self):
-    """Abstract method. Returns an instance of `tf.Session()` as `self.sess`.
-    This method will be called if and only if the argument `sess` in the
-    `self.__init__()` is `None` (as default)."""
-    pass
-
-
   def get_sess(self):
     """Returns an instance of `tf.Session()` as the argument `sess` of
     `iterate()`.
@@ -279,7 +239,6 @@ class BaseTrainer(object):
     Since there's only one session is needed through out the training process,
     we just return the `self.sess` created by method `self.create_sess`.
     """
-    return self.sess
 
 
   @abc.abstractmethod
@@ -317,44 +276,6 @@ class BaseTrainer(object):
     return None
 
 
-  @abc.abstractmethod
-  def save(self):
-    """Abstract method. Saves the checkpoint of `self.sess` to disk, or do
-    nothing is none is to be saved."""
-    pass
-
-
-  @abc.abstractmethod
-  def restore(self):
-    """Abstract method. Restores the checkpoint to `self.sess` from disk, or do
-    nothing is none is to be saved.
-
-    Returns:
-      `bool`, being `True` if sucessfully restored from checkpoint; else `False`.
-    """
-    pass
-
-
-  def get_global_step_val(self):
-    """Returns an `int` as the temporal value of global step."""
-    global_step_val = tf.train.global_step(self.sess, self.global_step)
-    return global_step_val
-
-
-  def initialize(self):
-    """Run `self.initializer` if has not been restored yet."""
-    try:
-      if not self.restored:
-        self.sess.run(self.initializer)
-        if self.verbose:
-          print('INFO - Restored.')
-    except NameError:
-      # meaning that `self.restored` is not defined, thus not restored.
-      self.sess.run(self.initializer)
-      if self.verbose:
-        print('INFO - Initialize without restoring.')
-
-
   def get_iterate_kwargs(self, feed_dict_generator):
     """Get the kwargs of `iterate()`."""
 
@@ -380,7 +301,6 @@ class BaseTrainer(object):
     return iterate_kwargs
 
 
-
   def iterate_body(self, feed_dict_generator):
     """The body of iteration. It gets the arguments needed by `iterate()` and
     runs `iterate()` once. Also, it increments the value of `self.global_step`.
@@ -389,8 +309,8 @@ class BaseTrainer(object):
     re-implementing `iterate_body()` with `super().iterate_body(...)`.
 
     Returns:
-      Dictionary with keys the `name` (attribute) of the `iter_ops` from
-      `self.get_iter_ops()`, and values the values.
+      List of numpy arraries, as the values of `Op`s from `self.get_iter_ops()`
+      in this iteration.
     """
 
     # Run `iterate()` once
@@ -400,6 +320,72 @@ class BaseTrainer(object):
     self.sess.run(self.increase_global_step_op)
 
     return iter_op_vals
+
+
+  @abc.abstractmethod
+  def create_saver(self):
+    """Abstract method. Returns an instance `tf.train.Saver()`.
+
+    NOTE:
+      Saver shall be initialized within `self.graph`.
+    """
+    pass
+
+
+  @abc.abstractmethod
+  def save(self):
+    """Abstract method. Saves the checkpoint of `self.sess` to disk, or do
+    nothing is none is to be saved."""
+    pass
+
+
+  @abc.abstractmethod
+  def restore(self):
+    """Abstract method. Restores the checkpoint to `self.sess` from disk, or
+    do nothing is none is to be saved. Calling this method SHALL modify the
+    attribute `restored` to be `True`.
+
+    Returns:
+      `bool`, being `True` if sucessfully restored from checkpoint; else
+      `False`.
+    """
+    self.has_restored = True
+
+
+  def build_initializer(self, initializer):
+    """Builds and returns an initializer.
+
+    Args:
+      initializer:
+        A TenosrFlow initializer, or `None`.
+
+    Returns:
+      A TenosrFlow initializer
+    """
+
+    with self.graph.as_default():
+
+      with tf.name_scope('initializer'):
+        _initializer = tf.global_variables_initializer() \
+                       if initializer is None else initializer
+
+    return _initializer
+
+
+  def initialize(self):
+    """Run `self.initializer` if has not been restored yet."""
+
+    if self.has_restored:
+
+      if self.verbose:
+        print('INFO - Restored, thus without initialization.')
+
+    else:
+
+      self.sess.run(self.initializer)
+
+      if self.verbose:
+        print('INFO - Initialized without restoring.')
 
 
   def train(self, n_iters, feed_dict_generator):
