@@ -200,6 +200,141 @@ class BaseTrainer(object):
     self.initializer = self.build_initializer(initializer)
 
 
+  def train(self, n_iters, feed_dict_generator):
+    """As the trainer trains.
+
+    Args:
+      n_iters:
+        `int`, as the number of iterations.
+
+      feed_dict_generator:
+        A generator that emits a feed_dict at each calling of `next()`.
+    """
+
+    # Initialize
+    self.initialize()
+
+    if self.verbose:
+      global_step_val = self.get_global_step_val()
+      print('INFO - Start training at global step {}.'.format(global_step_val))
+
+    # Iterations
+    for i in tqdm(range(n_iters)):  # XXX
+
+      try:
+        self.iterate_body(feed_dict_generator)
+
+      except StopIteration:
+        # Meaning that the `feed_dict_generator` has been exhausted.
+        print('INFO - No more training data to iterate.')
+        break
+
+    # Save the checkpoint to disk at the end of training
+    self.save()
+
+
+  def initialize(self):
+    """Run `self.initializer` if has not been restored yet."""
+
+    if self.has_restored:
+
+      if self.verbose:
+        print('INFO - Restored, thus without initialization.')
+
+    else:
+
+      self.sess.run(self.initializer)
+
+      if self.verbose:
+        print('INFO - Initialized without restoring.')
+
+
+  def iterate_body(self, feed_dict_generator):
+    """The body of iteration. It gets the arguments needed by `iterate()` and
+    runs `iterate()` once. Also, it increments the value of `self.global_step`.
+
+    Appending anything into this `iterate_body()` can be simply archived by
+    re-implementing `iterate_body()` with `super().iterate_body(...)`.
+
+    Returns:
+      List of numpy arraries, as the values of `Op`s from `self.get_iter_ops()`
+      in this iteration.
+    """
+
+    # Run `iterate()` once
+    iter_op_vals = iterate(**self.get_iterate_kwargs(feed_dict_generator))
+
+    # Also, increment the value of `self.global_step`
+    self.sess.run(self.increase_global_step_op)
+
+    return iter_op_vals
+
+
+  def get_iterate_kwargs(self, feed_dict_generator):
+    """Get the kwargs of `iterate()`."""
+
+    iterate_kwargs = {
+        'sess':
+            self.get_sess(),
+        'iter_ops':
+            self.get_iter_ops(),
+        'feed_dict':
+            next(feed_dict_generator),
+        'summarizer':
+            self.get_summarizer(),
+        'writer':
+            self.get_writer(),
+        'global_step_val':
+            self.get_global_step_val(),
+        'options':
+            self.get_options(),
+        'run_metadata':
+            self.get_run_metadata(),
+    }
+
+    return iterate_kwargs
+
+
+  @abc.abstractmethod
+  def save(self):
+    """Abstract method. Saves the checkpoint of `self.sess` to disk, or do
+    nothing is none is to be saved."""
+    pass
+
+
+  @abc.abstractmethod
+  def restore(self):
+    """Abstract method. Restores the checkpoint to `self.sess` from disk, or
+    do nothing is none is to be saved. Calling this method SHALL modify the
+    attribute `restored` to be `True`.
+
+    Returns:
+      `bool`, being `True` if sucessfully restored from checkpoint; else
+      `False`.
+    """
+    self.has_restored = True
+
+
+  def build_initializer(self, initializer):
+    """Builds and returns an initializer.
+
+    Args:
+      initializer:
+        A TenosrFlow initializer, or `None`.
+
+    Returns:
+      A TenosrFlow initializer
+    """
+
+    with self.graph.as_default():
+
+      with tf.name_scope('initializer'):
+        _initializer = tf.global_variables_initializer() \
+                       if initializer is None else initializer
+
+    return _initializer
+
+
   def build_global_step(self, init_global_step):
     """Builds and returns `global_step` and `increase_global_step_op` which
     increments the value of `global_step` at each call.
@@ -222,8 +357,20 @@ class BaseTrainer(object):
 
         increase_global_step_op = global_step.assign_add(1)
 
-    return global_step, increase_global_step_op
+    return (global_step, increase_global_step_op)
 
+
+  @abc.abstractmethod
+  def create_saver(self):
+    """Abstract method. Returns an instance `tf.train.Saver()`.
+
+    NOTE:
+      Saver shall be initialized within `self.graph`.
+    """
+    pass
+
+
+  # ---------------- Methods within `self.iterate_body()` ----------------
 
   def get_global_step_val(self):
     """Returns an `int` as the temporal value of global step."""
@@ -274,148 +421,3 @@ class BaseTrainer(object):
     """Abstract method. Returns a `[RunMetadata]` protocol buffer or `None`, as
     the argument `run_metadata` of `iterate()`."""
     return None
-
-
-  def get_iterate_kwargs(self, feed_dict_generator):
-    """Get the kwargs of `iterate()`."""
-
-    iterate_kwargs = {
-        'sess':
-            self.get_sess(),
-        'iter_ops':
-            self.get_iter_ops(),
-        'feed_dict':
-            next(feed_dict_generator),
-        'summarizer':
-            self.get_summarizer(),
-        'writer':
-            self.get_writer(),
-        'global_step_val':
-            self.get_global_step_val(),
-        'options':
-            self.get_options(),
-        'run_metadata':
-            self.get_run_metadata(),
-    }
-
-    return iterate_kwargs
-
-
-  def iterate_body(self, feed_dict_generator):
-    """The body of iteration. It gets the arguments needed by `iterate()` and
-    runs `iterate()` once. Also, it increments the value of `self.global_step`.
-
-    Appending anything into this `iterate_body()` can be simply archived by
-    re-implementing `iterate_body()` with `super().iterate_body(...)`.
-
-    Returns:
-      List of numpy arraries, as the values of `Op`s from `self.get_iter_ops()`
-      in this iteration.
-    """
-
-    # Run `iterate()` once
-    iter_op_vals = iterate(**self.get_iterate_kwargs(feed_dict_generator))
-
-    # Also, increment the value of `self.global_step`
-    self.sess.run(self.increase_global_step_op)
-
-    return iter_op_vals
-
-
-  @abc.abstractmethod
-  def create_saver(self):
-    """Abstract method. Returns an instance `tf.train.Saver()`.
-
-    NOTE:
-      Saver shall be initialized within `self.graph`.
-    """
-    pass
-
-
-  @abc.abstractmethod
-  def save(self):
-    """Abstract method. Saves the checkpoint of `self.sess` to disk, or do
-    nothing is none is to be saved."""
-    pass
-
-
-  @abc.abstractmethod
-  def restore(self):
-    """Abstract method. Restores the checkpoint to `self.sess` from disk, or
-    do nothing is none is to be saved. Calling this method SHALL modify the
-    attribute `restored` to be `True`.
-
-    Returns:
-      `bool`, being `True` if sucessfully restored from checkpoint; else
-      `False`.
-    """
-    self.has_restored = True
-
-
-  def build_initializer(self, initializer):
-    """Builds and returns an initializer.
-
-    Args:
-      initializer:
-        A TenosrFlow initializer, or `None`.
-
-    Returns:
-      A TenosrFlow initializer
-    """
-
-    with self.graph.as_default():
-
-      with tf.name_scope('initializer'):
-        _initializer = tf.global_variables_initializer() \
-                       if initializer is None else initializer
-
-    return _initializer
-
-
-  def initialize(self):
-    """Run `self.initializer` if has not been restored yet."""
-
-    if self.has_restored:
-
-      if self.verbose:
-        print('INFO - Restored, thus without initialization.')
-
-    else:
-
-      self.sess.run(self.initializer)
-
-      if self.verbose:
-        print('INFO - Initialized without restoring.')
-
-
-  def train(self, n_iters, feed_dict_generator):
-    """As the trainer trains.
-
-    Args:
-      n_iters:
-        `int`, as the number of iterations.
-
-      feed_dict_generator:
-        A generator that emits a feed_dict at each calling of `next()`.
-    """
-
-    # Initialize
-    self.initialize()
-
-    if self.verbose:
-      global_step_val = self.get_global_step_val()
-      print('INFO - Start training at global step {}.'.format(global_step_val))
-
-    # Iterations
-    for i in tqdm(range(n_iters)):  # XXX
-
-      try:
-        self.iterate_body(feed_dict_generator)
-
-      except StopIteration:
-        # Meaning that the `feed_dict_generator` has been exhausted.
-        print('INFO - No more training data to iterate.')
-        break
-
-    # Save the checkpoint to disk at the end of training
-    self.save()
