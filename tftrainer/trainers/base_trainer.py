@@ -161,22 +161,14 @@ class BaseTrainer(object):
       As the trainer trains.
   """
 
-  def __init__(self, init_global_step=0, initializer=None, verbose=True):
-    """This function shall be called after all codes in the `__init__()` of
-    any class that inherits this abstract base class. For two reasons:
-
-      1. Session shall be created after the graph has been completely built up
-         (thus will not be modified anymore). The reason is that the partition
-         of the resources and the edges of the graph in the session is optimized
-         based on the graph. Thus the graph shall not be modified after the
-         session having been created.
-
-      2. Some operation, like initializer, shall be placed in the end of the
-         graph.
+  def __init__(self, init_global_step=0, verbose=True):
+    """Session shall be created after the graph has been completely built up
+    (thus will not be modified anymore). The reason is that the partition of
+    the resources and the edges of the graph in the session is optimized based
+    on the graph. Thus the graph shall not be modified after the session having
+    been created.
     """
 
-    # Do something that initializes a subclass that inherits this abstract base
-    # class, and then call `super().__init__()` that runs the below.
     # `tf.Session` shall be created AFTER `super().__init__()`, when finishing
     # building `self.graph`.
 
@@ -190,17 +182,8 @@ class BaseTrainer(object):
     self.global_step, self.increase_global_step_op = \
         self.build_global_step(init_global_step)
 
-    # For saving and restoring. This shall be located after introducing all
-    # variables that are to be saved and restored.
-    self.saver = self.create_saver()
-    print(type(self.saver))
 
-    # Initializer shall be placed in the end of the graph.
-    # XXX: Why?
-    self.initializer = self.build_initializer(initializer)
-
-
-  def train(self, n_iters, feed_dict_generator):
+  def train(self, n_iters, feed_dict_generator, initializer=None):
     """As the trainer trains.
 
     Args:
@@ -212,17 +195,15 @@ class BaseTrainer(object):
     """
 
     # Initialize
-    self.initialize()
-
-    if self.verbose:
-      global_step_val = self.get_global_step_val()
-      print('INFO - Start training at global step {}.'.format(global_step_val))
+    self.initialize(initializer)
 
     # Iterations
-    for i in tqdm(range(n_iters)):  # XXX
+    pbar = tqdm(range(n_iters))
+    for i in pbar:
 
       try:
-        self.iterate_body(feed_dict_generator)
+        self.iter_op_vals = self.iterate_body(feed_dict_generator)
+        pbar.set_description(self.set_pbar_description())
 
       except StopIteration:
         # Meaning that the `feed_dict_generator` has been exhausted.
@@ -233,20 +214,30 @@ class BaseTrainer(object):
     self.save()
 
 
-  def initialize(self):
-    """Run `self.initializer` if has not been restored yet."""
+  def set_pbar_description(self):
+    """To be overrided."""
+    return None
+
+
+  def initialize(self, initializer):
+    """Shall be called after being restored and having created `self.sess`."""
 
     if self.has_restored:
-
       if self.verbose:
         print('INFO - Restored, thus without initialization.')
 
     else:
-
-      self.sess.run(self.initializer)
+      if initializer is None:
+        self.sess.run(tf.global_variables_initializer())
+      else:
+        self.sess.run(initializer)
 
       if self.verbose:
         print('INFO - Initialized without restoring.')
+
+    if self.verbose:
+      global_step_val = self.get_global_step_val()
+      print('INFO - Start training at global step {}.'.format(global_step_val))
 
 
   def iterate_body(self, feed_dict_generator):
@@ -315,26 +306,6 @@ class BaseTrainer(object):
     self.has_restored = True
 
 
-  def build_initializer(self, initializer):
-    """Builds and returns an initializer.
-
-    Args:
-      initializer:
-        A TenosrFlow initializer, or `None`.
-
-    Returns:
-      A TenosrFlow initializer
-    """
-
-    with self.graph.as_default():
-
-      with tf.name_scope('initializer'):
-        _initializer = tf.global_variables_initializer() \
-                       if initializer is None else initializer
-
-    return _initializer
-
-
   def build_global_step(self, init_global_step):
     """Builds and returns `global_step` and `increase_global_step_op` which
     increments the value of `global_step` at each call.
@@ -363,6 +334,11 @@ class BaseTrainer(object):
   @abc.abstractmethod
   def create_saver(self):
     """Abstract method. Returns an instance `tf.train.Saver()`.
+    
+    CAUTION:
+      This method shall be called after introducing all variables that are to
+      be saved and restored. Otherwise, a `FailedPreconditionError` exception
+      "Attempting to use uninitialized value ..." will raise.
 
     NOTE:
       Saver shall be initialized within `self.graph`.
