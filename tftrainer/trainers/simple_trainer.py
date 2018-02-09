@@ -10,8 +10,8 @@ C.f. https://www.tensorflow.org/get_started/mnist/beginners.
 import os
 import tensorflow as tf
 from tensorflow.python import debug as tf_debug
-from tftrainer.trainers.base_trainer import BaseTrainer
-from tftrainer.utils.helpers import ensure_directory
+from .base_trainer import BaseTrainer
+from .utils import ensure_directory
 
 
 
@@ -34,9 +34,9 @@ def create_train_ops(graph, loss, gvs, optimizer):
 
       if gvs is not None:
         train_op = optimizer.apply_gradients(gvs)
-        sorted_gvs = sorted(gvs, lambda gv: gv[1].name)
+        sorted_gvs = sorted(gvs, key=lambda gv: gv[1].name)
         gradients = [g for g, v in sorted_gvs]
-        train_ops = [train_op, gradients]
+        train_ops = [train_op, loss, gradients]
       else:
         # The argument `global_step` in `minimize()` will automatically
         # `assign_add(1)` to what is put into the arugment, thus shall not be
@@ -122,26 +122,38 @@ def restore(dir_to_ckpt, saver, sess):
 class SimpleTrainer(BaseTrainer):
   """With the basic implementation for each method."""
 
-  def __init__(self, graph=None, loss=None, gvs=None, optimizer=None,
-               logdir=None, log_vars=None, writer_skip_step=10,
-               dir_to_ckpt=None, sess_config=None, sess_target='', debug=False,
-               *args, **kwargs):
+  def __init__(self, graph=None, loss=None, gvs=None, optimizer=None, lr=0.01,
+               decay_steps=None, decay_rate=None, staircase=False, logdir=None,
+               log_vars=None, writer_skip_step=10, dir_to_ckpt=None,
+               sess_config=None, sess_target='', debug=False, *args, **kwargs):
 
-    self.graph = tf.get_default_graph() if graph is None \
-                 else graph
+    self.graph = tf.get_default_graph() if graph is None else graph
+    super().__init__(*args, **kwargs)
 
     # For optimization
     self.loss = loss
     self.gvs = gvs
-    self.optimizer = tf.train.AdamOptimizer(0.01) if optimizer is None \
-                     else optimizer
+    self.decay_steps = decay_steps
+    self.decay_rate = decay_rate
+    self.staircase = staircase
+    if all([self.decay_steps, self.decay_rate]):
+      self.lr = tf.train.exponential_decay(
+          lr, self.global_step, self.decay_steps,
+          self.decay_rate, staircase=self.staircase)
+      if self.verbose:
+        print('INFO - With learning-rate decay.')
+    else:
+      self.lr = lr
+    if optimizer is None:
+      self.optimizer = tf.train.AdamOptimizer(self.lr)
+    else:
+      self.optimizer = optimizer
     self.train_ops = create_train_ops(
         self.graph, self.loss, self.gvs, self.optimizer)
 
     # For TensorBoard
     self.logdir = logdir
-    self.log_vars = [self.loss] if log_vars is None \
-                    else log_vars
+    self.log_vars = [self.loss] if log_vars is None else log_vars
     self.writer_skip_step = writer_skip_step
     self.summarizer = create_summarizer(self.graph, self.log_vars)
     self.writer = create_writer(self.graph, self.logdir)
@@ -151,9 +163,13 @@ class SimpleTrainer(BaseTrainer):
     if self.dir_to_ckpt is not None:
       ensure_directory(self.dir_to_ckpt)
 
-    # Recall that `super()` can only be called in the end. (C.f. the docsting of
-    # `BaseTrainer`.)
-    super().__init__(*args, **kwargs)
+    ## Recall that `super()` can only be called in the end. (C.f. the docsting of
+    ## `BaseTrainer`.)
+    #super().__init__(*args, **kwargs)
+
+    # For saving and restoring. This shall be located after introducing all
+    # variables that are to be saved and restored.
+    self.saver = self.create_saver()
 
     # For session
     self.sess = create_sess(self.graph, sess_config, sess_target, debug)
@@ -248,3 +264,10 @@ class SimpleTrainer(BaseTrainer):
   def shall_stop_by_gradients(self, gradient_vals):
     pass
 
+
+  def set_pbar_description(self):
+    """Override."""
+    if self.loss is None:
+      return None
+    else:
+      return 'loss: {0:8.2f}'.format(self.iter_op_vals[1])
